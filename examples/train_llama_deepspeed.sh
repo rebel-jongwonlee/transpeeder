@@ -36,8 +36,8 @@ fi
 
 deepspeed --include localhost:$2  --master_port ${MASTER_PORT} ${WORK_DIR}/train.py \
     --output_dir ${OUTPUT} \
-    --init_ckpt /home/jongwonlee/ref/transpeeder/ckpt/llama-3.2-1B-init-ckpt/ \
-    --data_path /home/jongwonlee/ref/transpeeder/data/alpaca_data_sample_oneline_format.json \
+    --init_ckpt /home/jongwonlee/work/transpeeder/ckpt/llama-3.2-1B-mp-1/ \
+    --data_path /home/jongwonlee/work/transpeeder/data/alpaca_data_sample_oneline_format.json \
     --max_seq_len 8192 \
     --train_steps 1000 \
     --eval_steps 10 \

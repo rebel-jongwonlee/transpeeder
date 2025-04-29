@@ -84,6 +84,7 @@ def get_model(model_config: LlamaConfig, args, activation_checkpointing_config=N
 
     pp = args.pipe_parallel_size
     mp = args.model_parallel_size
+    print(f"world_size={args.world_size}, pp={pp}, mp={mp}")
     assert args.world_size % (pp * mp) == 0
     dp = args.world_size // (pp * mp)
 
