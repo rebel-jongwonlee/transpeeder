@@ -87,16 +87,17 @@ def main():
         model=model,
     )
 
-    if "llama" in args.model_name_or_path:
-        tokenizer.add_special_tokens(
-            {
-                "eos_token": DEFAULT_EOS_TOKEN,
-                "bos_token": DEFAULT_BOS_TOKEN,
-                "unk_token": DEFAULT_UNK_TOKEN,
-            }
-        )
+    # if "Llama" in args.model_name_or_path:
+    #     tokenizer.add_special_tokens(
+    #         {
+    #             "eos_token": DEFAULT_EOS_TOKEN,
+    #             "bos_token": DEFAULT_BOS_TOKEN,
+    #             "unk_token": DEFAULT_UNK_TOKEN,
+    #         }
+    #     )
 
     model_config.vocab_size = len(tokenizer)
+    print(f"model_config.vocab_size={model_config.vocab_size}")
 
     outpath = Path(args.output_dir)
     if outpath.exists():

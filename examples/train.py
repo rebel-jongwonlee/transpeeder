@@ -19,6 +19,12 @@ from transpeeder.feeder import (
     make_prompt_dataloader,
     make_tokenized_dataloader,
 )
+from transpeeder.feeder import (
+    DEFAULT_BOS_TOKEN,
+    DEFAULT_PAD_TOKEN,
+    DEFAULT_EOS_TOKEN,
+    DEFAULT_UNK_TOKEN,
+)
 from transpeeder.utils import jload
 from transpeeder.utils import logger_rank0 as logger
 
@@ -83,17 +89,33 @@ def main():
         refine_rope()
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
-        args.init_ckpt,
+        # args.init_ckpt,
+        "meta-llama/Llama-3.2-1B",
         model_max_length=args.max_seq_len,
         padding_side="right",
         use_fast=False,
     )
+    print(f"tokenizer={tokenizer}")
+    print(type(tokenizer))
+    tokenizer.add_special_tokens(
+            {
+                "pad_token": DEFAULT_PAD_TOKEN,
+                "eos_token": DEFAULT_EOS_TOKEN,
+                "bos_token": DEFAULT_BOS_TOKEN,
+                "unk_token": DEFAULT_UNK_TOKEN,
+            }
+        )
     model_config = transformers.AutoConfig.from_pretrained(args.init_ckpt)
 
     if args.ntk:
         rope_scaling = {
-            "type": "dynamic",
-            "factor": 2,
+            # "type": "dynamic",
+            # "factor": 2,
+            "factor": 32.0,
+            "high_freq_factor": 4.0,
+            "low_freq_factor": 1.0,
+            "original_max_position_embeddings": 8192,
+            "rope_type": "llama3"
         }
         model_config.rope_scaling = rope_scaling
         logger.info(f"Turn on dynamic rope for llama2")
@@ -117,6 +139,7 @@ def main():
                             load_module_only=True,
                             load_optimizer_states=False,
                             load_lr_scheduler_states=False,
+                            load_module_strict=False,
         )
     else:
         engine.load_checkpoint(args.resume_ckpt)

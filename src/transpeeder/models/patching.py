@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm, LlamaConfig, LlamaRotaryEmbedding
 
 from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func
 from flash_attn.bert_padding import unpad_input, pad_input
@@ -55,6 +56,8 @@ def llama_flash_attn_forward(
     past_key_value: Optional[Tuple[torch.Tensor]] = None,
     output_attentions: bool = False,
     use_cache: bool = False,
+    cache_position: Optional[torch.Tensor] = None,
+    position_embeddings: Optional[Tuple[torch.Tensor]] = None,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor],
             Optional[Tuple[torch.Tensor]]]:
     """Input shape: Batch x Time x Channel
@@ -64,8 +67,8 @@ def llama_flash_attn_forward(
     bsz, q_len, _ = hidden_states.size()
 
     if self.config.pretraining_tp > 1:
-        key_value_slicing = (self.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
-        query_slices = self.q_proj.weight.split((self.num_heads * self.head_dim) // self.config.pretraining_tp, dim=0)
+        key_value_slicing = (self.config.num_key_value_heads * self.head_dim) // self.config.pretraining_tp
+        query_slices = self.q_proj.weight.split((self.config.num_key_value_heads * self.head_dim) // self.config.pretraining_tp, dim=0)
         key_slices = self.k_proj.weight.split(key_value_slicing, dim=0)
         value_slices = self.v_proj.weight.split(key_value_slicing, dim=0)
 
@@ -83,14 +86,17 @@ def llama_flash_attn_forward(
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
 
-    query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-    key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-    value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+    query_states = query_states.view(bsz, q_len, self.config.num_attention_heads, self.head_dim).transpose(1, 2)
+    key_states = key_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(1, 2)
+    value_states = value_states.view(bsz, q_len, self.config.num_key_value_heads, self.head_dim).transpose(1, 2)
 
     kv_seq_len = key_states.shape[-2]
     if past_key_value is not None:
         kv_seq_len += past_key_value[0].shape[-2]
-    cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+    # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+    # cos, sin = position_embeddings
+    rotary_emb = LlamaRotaryEmbedding(config=self.config)
+    cos, sin = rotary_emb(value_states, position_ids=kv_seq_len)
     query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
     if past_key_value is not None:
@@ -116,7 +122,7 @@ def llama_flash_attn_forward(
     key_padding_mask = attention_mask
 
     if key_padding_mask is None:
-        qkv = qkv.reshape(-1, 3, self.num_heads, self.head_dim)
+        qkv = qkv.reshape(-1, 3, self.config.num_key_value_heads, self.head_dim)
         cu_q_lens = torch.arange(
             0, (bsz + 1) * q_len, step=q_len, dtype=torch.int32, device=qkv.device
         )
@@ -128,11 +134,11 @@ def llama_flash_attn_forward(
     else:
         qkv = qkv.reshape(bsz, q_len, -1)
         qkv, indices, cu_q_lens, max_s = unpad_input(qkv, key_padding_mask)
-        qkv = qkv.view(-1, 3, self.num_heads, self.head_dim)
+        qkv = qkv.view(-1, 3, self.config.num_key_value_heads, self.head_dim)
         output_unpad = flash_attn_varlen_qkvpacked_func(
             qkv, cu_q_lens, max_s, 0.0, softmax_scale=None, causal=True
         )
-        output_unpad = output_unpad.reshape(-1, self.num_heads * self.head_dim)
+        output_unpad = output_unpad.reshape(-1, self.config.num_key_value_heads * self.head_dim)
         output = pad_input(output_unpad, indices, bsz, q_len)
 
     return self.o_proj(output), None, past_key_value

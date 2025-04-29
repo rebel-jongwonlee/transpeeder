@@ -1,7 +1,7 @@
 
 import torch
 import torch.nn.functional as F
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm, LlamaConfig
+from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm, LlamaConfig, LlamaRotaryEmbedding
 import deepspeed
 from deepspeed.pipe import PipelineModule, LayerSpec
 
@@ -14,17 +14,20 @@ class EmbeddingPipe(torch.nn.Embedding):
 
 
 class ParallelTransformerLayerPipe(LlamaDecoderLayer):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
+    def __init__(self, config: LlamaConfig, layer_idx):
+        super().__init__(config, layer_idx)
+        self.rotary_emb = LlamaRotaryEmbedding(config=config)
 
     def forward(self, args):
         hidden_states, position_ids, mask = args
         attention_mask = torch.where(mask == True, float("-inf"), 0).long()
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         outputs = LlamaDecoderLayer.forward(self,
-                                            hidden_states,
-                                            attention_mask,
-                                            position_ids,
+                                            hidden_states=hidden_states,
+                                            attention_mask=attention_mask,
+                                            position_ids=position_ids,
+                                            position_embeddings=position_embeddings,
         )
         return (outputs[0], position_ids, mask)
 
@@ -69,8 +72,8 @@ def get_model(model_config: LlamaConfig, args, activation_checkpointing_config=N
             super().__init__(
                 layers=[
                     LayerSpec(EmbeddingPipe, model_config.vocab_size, model_config.hidden_size),
-                    *[LayerSpec(ParallelTransformerLayerPipe, model_config)
-                        for _ in range(model_config.num_hidden_layers)],
+                    *[LayerSpec(ParallelTransformerLayerPipe, model_config, layer_idx)
+                        for layer_idx in range(model_config.num_hidden_layers)],
                     LayerSpec(LayerNormPipe, model_config.hidden_size, model_config.rms_norm_eps),
                     LayerSpec(LMLayerPipe, model_config.hidden_size, model_config.vocab_size, bias=False),
                 ],
